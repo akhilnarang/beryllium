@@ -3277,6 +3277,7 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 	if ((smmu_state->state != DETACHED) &&
 			(smmu_state->state != DETACH_ALL_REQ) &&
 			sde_crtc->enabled)
+
 		sde_cp_crtc_apply_properties(crtc);
 
 	/*
@@ -4983,7 +4984,7 @@ void sde_crtc_cancel_pending_flip(struct drm_crtc *crtc, struct drm_file *file)
 {
 	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
 
-	SDE_DEBUG("%s: cancel: %pK\n", sde_crtc->name, file);
+	SDE_DEBUG("%s: cancel: %p\n", sde_crtc->name, file);
 	_sde_crtc_complete_flip(crtc, file);
 }
 

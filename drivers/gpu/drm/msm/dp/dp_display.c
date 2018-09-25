@@ -22,8 +22,6 @@
 #include <linux/of_irq.h>
 #include <linux/hdcp_qseecom.h>
 
-#include "sde_connector.h"
-
 #include "msm_drv.h"
 #include "dp_usbpd.h"
 #include "dp_parser.h"
@@ -276,15 +274,12 @@ static void dp_display_deinitialize_hdcp(struct dp_display_private *dp)
 static int dp_display_initialize_hdcp(struct dp_display_private *dp)
 {
 	struct sde_hdcp_init_data hdcp_init_data;
-	struct dp_parser *parser;
 	int rc = 0;
 
 	if (!dp) {
 		pr_err("invalid input\n");
 		return -EINVAL;
 	}
-
-	parser = dp->parser;
 
 	mutex_init(&dp->hdcp_mutex);
 
@@ -295,14 +290,13 @@ static int dp_display_initialize_hdcp(struct dp_display_private *dp)
 	hdcp_init_data.mutex         = &dp->hdcp_mutex;
 	hdcp_init_data.sec_access    = true;
 	hdcp_init_data.notify_status = dp_display_notify_hdcp_status_cb;
-	hdcp_init_data.dp_ahb        = &parser->get_io(parser, "dp_ahb")->io;
-	hdcp_init_data.dp_aux        = &parser->get_io(parser, "dp_aux")->io;
-	hdcp_init_data.dp_link       = &parser->get_io(parser, "dp_link")->io;
-	hdcp_init_data.dp_p0         = &parser->get_io(parser, "dp_p0")->io;
-	hdcp_init_data.qfprom_io     = &parser->get_io(parser,
-						"qfprom_physical")->io;
-	hdcp_init_data.hdcp_io       = &parser->get_io(parser,
-						"hdcp_physical")->io;
+	hdcp_init_data.core_io       = &dp->parser->io.ctrl_io;
+	hdcp_init_data.dp_ahb        = &dp->parser->io.dp_ahb;
+	hdcp_init_data.dp_aux        = &dp->parser->io.dp_aux;
+	hdcp_init_data.dp_link       = &dp->parser->io.dp_link;
+	hdcp_init_data.dp_p0         = &dp->parser->io.dp_p0;
+	hdcp_init_data.qfprom_io     = &dp->parser->io.qfprom_io;
+	hdcp_init_data.hdcp_io       = &dp->parser->io.hdcp_io;
 	hdcp_init_data.revision      = &dp->panel->link_info.revision;
 
 	dp->hdcp.hdcp1 = sde_hdcp_1x_init(&hdcp_init_data);
@@ -472,7 +466,6 @@ static int dp_display_send_hpd_notification(struct dp_display_private *dp,
 		bool hpd)
 {
 	u32 timeout_sec;
-	int ret = 0;
 
 	dp->dp_display.is_connected = hpd;
 
@@ -481,20 +474,16 @@ static int dp_display_send_hpd_notification(struct dp_display_private *dp,
 	else
 		timeout_sec = 10;
 
-	dp->aux->state |= DP_STATE_NOTIFICATION_SENT;
-
 	reinit_completion(&dp->notification_comp);
 	dp_display_send_hpd_event(dp);
 
 	if (!wait_for_completion_timeout(&dp->notification_comp,
 						HZ * timeout_sec)) {
 		pr_warn("%s timeout\n", hpd ? "connect" : "disconnect");
-		ret = -EINVAL;
+		return -EINVAL;
 	}
 
-	dp->aux->state &= ~DP_STATE_NOTIFICATION_SENT;
-
-	return ret;
+	return 0;
 }
 
 static int dp_display_process_hpd_high(struct dp_display_private *dp)
@@ -512,24 +501,28 @@ static int dp_display_process_hpd_high(struct dp_display_private *dp)
 	if (!dp->dp_display.connector)
 		return 0;
 
-	rc = dp->panel->read_sink_caps(dp->panel,
-		dp->dp_display.connector, dp->usbpd->multi_func);
+	rc = dp->panel->read_sink_caps(dp->panel, dp->dp_display.connector);
 	if (rc) {
-		/*
-		 * ETIMEDOUT --> cable may have been removed
-		 * ENOTCONN --> no downstream device connected
-		 */
-		if (rc == -ETIMEDOUT || rc == -ENOTCONN)
+		if (rc == -ETIMEDOUT) {
+			pr_err("Sink cap read failed, skip notification\n");
 			goto end;
-		else
+		} else {
 			goto notify;
+		}
+	}
+
+	dp->link->process_request(dp->link);
+
+	if (dp_display_is_sink_count_zero(dp)) {
+		pr_debug("no downstream devices connected\n");
+		rc = -EINVAL;
+		goto end;
 	}
 
 	edid = dp->panel->edid_ctrl->edid;
 
 	dp->audio_supported = drm_detect_monitor_audio(edid);
 
-	dp->link->process_request(dp->link);
 	dp->panel->handle_sink_request(dp->panel);
 
 	dp->dp_display.max_pclk_khz = dp->parser->max_pclk_khz;
@@ -543,7 +536,6 @@ end:
 static void dp_display_host_init(struct dp_display_private *dp)
 {
 	bool flip = false;
-	bool reset;
 
 	if (dp->core_initialized) {
 		pr_debug("DP core already initialized\n");
@@ -553,10 +545,8 @@ static void dp_display_host_init(struct dp_display_private *dp)
 	if (dp->usbpd->orientation == ORIENTATION_CC2)
 		flip = true;
 
-	reset = dp->debug->sim_mode ? false : !dp->usbpd->multi_func;
-
 	dp->power->init(dp->power, flip);
-	dp->ctrl->init(dp->ctrl, flip, reset);
+	dp->ctrl->init(dp->ctrl, flip, dp->usbpd->multi_func);
 	enable_irq(dp->irq);
 	dp->core_initialized = true;
 }
@@ -572,7 +562,6 @@ static void dp_display_host_deinit(struct dp_display_private *dp)
 	dp->power->deinit(dp->power);
 	disable_irq(dp->irq);
 	dp->core_initialized = false;
-	dp->aux->state = 0;
 }
 
 static int dp_display_process_hpd_low(struct dp_display_private *dp)
@@ -593,6 +582,8 @@ static int dp_display_process_hpd_low(struct dp_display_private *dp)
 	dp->audio_status = -ENODEV;
 
 	rc = dp_display_send_hpd_notification(dp, false);
+
+	dp->aux->deinit(dp->aux);
 
 	dp->panel->video_test = false;
 
@@ -640,8 +631,6 @@ static void dp_display_clean(struct dp_display_private *dp)
 
 	dp->ctrl->push_idle(dp->ctrl);
 	dp->ctrl->off(dp->ctrl);
-	dp->panel->deinit(dp->panel);
-	dp->aux->deinit(dp->aux);
 	dp->power_on = false;
 }
 
@@ -685,13 +674,6 @@ static int dp_display_usbpd_disconnect_cb(struct device *dev)
 		rc = -ENODEV;
 		goto end;
 	}
-
-	/*
-	 * In case cable/dongle is disconnected during adb shell stop,
-	 * reset psm_enabled flag to false since it is no more needed
-	 */
-	if (dp->dp_display.post_open)
-		dp->debug->psm_enabled = false;
 
 	if (dp->debug->psm_enabled)
 		dp->link->psm_config(dp->link, &dp->panel->link_info, true);
@@ -790,14 +772,7 @@ static int dp_display_usbpd_attention_cb(struct device *dev)
 		return -ENODEV;
 	}
 
-	/* check if framework is ready */
-	if (!dp_display_framework_ready(dp)) {
-		pr_err("framework not ready\n");
-		return -ENODEV;
-	}
-
-	if (dp->usbpd->hpd_irq && dp->usbpd->hpd_high &&
-	    dp->power_on) {
+	if (dp->usbpd->hpd_irq && dp->usbpd->hpd_high) {
 		dp->link->process_request(dp->link);
 		queue_work(dp->wq, &dp->attention_work);
 	} else if (dp->usbpd->hpd_high) {
@@ -826,7 +801,7 @@ static void dp_display_connect_work(struct work_struct *work)
 	struct dp_display_private *dp = container_of(dw,
 			struct dp_display_private, connect_work);
 
-	if (dp->dp_display.is_connected && dp_display_framework_ready(dp)) {
+	if (dp->dp_display.is_connected) {
 		pr_debug("HPD already on\n");
 		return;
 	}
@@ -882,7 +857,7 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 		goto error_catalog;
 	}
 
-	dp->catalog = dp_catalog_get(dev, dp->parser);
+	dp->catalog = dp_catalog_get(dev, &dp->parser->io);
 	if (IS_ERR(dp->catalog)) {
 		rc = PTR_ERR(dp->catalog);
 		pr_err("failed to initialize catalog, rc = %d\n", rc);
@@ -974,8 +949,7 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 	}
 
 	dp->debug = dp_debug_get(dev, dp->panel, dp->usbpd,
-				dp->link, dp->aux, &dp->dp_display.connector,
-				dp->catalog);
+				dp->link, &dp->dp_display.connector);
 	if (IS_ERR(dp->debug)) {
 		rc = PTR_ERR(dp->debug);
 		pr_err("failed to initialize debug, rc = %d\n", rc);
@@ -1095,11 +1069,6 @@ static int dp_display_enable(struct dp_display *dp_display)
 
 	dp->aux->init(dp->aux, dp->parser->aux_cfg);
 
-	if (dp->debug->psm_enabled) {
-		dp->link->psm_config(dp->link, &dp->panel->link_info, false);
-		dp->debug->psm_enabled = false;
-	}
-
 	rc = dp->ctrl->on(dp->ctrl);
 
 	if (dp->debug->tpg_state)
@@ -1151,12 +1120,9 @@ static int dp_display_post_enable(struct dp_display *dp_display)
 		dp->hdcp_status = HDCP_STATE_AUTHENTICATING;
 		queue_delayed_work(dp->wq, &dp->hdcp_cb_work, HZ / 2);
 	}
-
-	dp->panel->setup_hdr(dp->panel, NULL);
 end:
 	/* clear framework event notifier */
 	dp_display->post_open = NULL;
-	dp->aux->state |= DP_STATE_CTRL_POWERED_ON;
 
 	complete_all(&dp->notification_comp);
 	mutex_unlock(&dp->session_lock);
@@ -1189,15 +1155,6 @@ static int dp_display_pre_disable(struct dp_display *dp_display)
 			dp->hdcp.ops->off(dp->hdcp.data);
 	}
 
-	if (dp->usbpd->hpd_high && !dp_display_is_sink_count_zero(dp) &&
-		dp->usbpd->alt_mode_cfg_done) {
-		if (dp->audio_supported)
-			dp->audio->off(dp->audio);
-
-		dp->link->psm_config(dp->link, &dp->panel->link_info, true);
-		dp->debug->psm_enabled = true;
-	}
-
 	dp->ctrl->push_idle(dp->ctrl);
 end:
 	mutex_unlock(&dp->session_lock);
@@ -1207,8 +1164,6 @@ end:
 static int dp_display_disable(struct dp_display *dp_display)
 {
 	struct dp_display_private *dp;
-	struct drm_connector *connector;
-	struct sde_connector_state *c_state;
 
 	if (!dp_display) {
 		pr_err("invalid input\n");
@@ -1216,8 +1171,6 @@ static int dp_display_disable(struct dp_display *dp_display)
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
-	connector = dp->dp_display.connector;
-	c_state = to_sde_connector_state(connector->state);
 
 	mutex_lock(&dp->session_lock);
 
@@ -1228,27 +1181,9 @@ static int dp_display_disable(struct dp_display *dp_display)
 
 	dp->ctrl->off(dp->ctrl);
 	dp->panel->deinit(dp->panel);
-	dp->aux->deinit(dp->aux);
-
-	connector->hdr_eotf = 0;
-	connector->hdr_metadata_type_one = 0;
-	connector->hdr_max_luminance = 0;
-	connector->hdr_avg_luminance = 0;
-	connector->hdr_min_luminance = 0;
-
-	memset(&c_state->hdr_meta, 0, sizeof(c_state->hdr_meta));
-
-	/*
-	 * In case of framework reboot, the DP off sequence is executed without
-	 * any notification from driver. Initialize post_open callback to notify
-	 * DP connection once framework restarts.
-	 */
-	if (dp->usbpd->hpd_high && !dp_display_is_sink_count_zero(dp) &&
-		dp->usbpd->alt_mode_cfg_done)
-		dp_display->post_open = dp_display_post_open;
 
 	dp->power_on = false;
-	dp->aux->state = DP_STATE_CTRL_POWERED_OFF;
+
 end:
 	complete_all(&dp->notification_comp);
 	mutex_unlock(&dp->session_lock);
@@ -1356,7 +1291,8 @@ static int dp_display_get_modes(struct dp_display *dp,
 	return ret;
 }
 
-static int dp_display_config_hdr(struct dp_display *dp_display,
+
+static int dp_display_pre_kickoff(struct dp_display *dp_display,
 			struct drm_msm_ext_hdr_metadata *hdr)
 {
 	int rc = 0;
@@ -1369,7 +1305,8 @@ static int dp_display_config_hdr(struct dp_display *dp_display,
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
 
-	rc = dp->panel->setup_hdr(dp->panel, hdr);
+	if (hdr->hdr_supported && dp->panel->hdr_supported(dp->panel))
+		rc = dp->panel->setup_hdr(dp->panel, hdr);
 
 	return rc;
 }
@@ -1436,7 +1373,7 @@ static int dp_display_probe(struct platform_device *pdev)
 	g_dp_display->get_debug     = dp_get_debug;
 	g_dp_display->post_open     = dp_display_post_open;
 	g_dp_display->post_init     = dp_display_post_init;
-	g_dp_display->config_hdr    = dp_display_config_hdr;
+	g_dp_display->pre_kickoff   = dp_display_pre_kickoff;
 
 	rc = component_add(&pdev->dev, &dp_display_comp_ops);
 	if (rc) {

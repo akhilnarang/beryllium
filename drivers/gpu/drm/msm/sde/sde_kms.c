@@ -972,7 +972,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 		.get_mode_info  = dp_connector_get_mode_info,
 		.post_open  = dp_connector_post_open,
 		.check_status = NULL,
-		.config_hdr = dp_connector_config_hdr,
+		.pre_kickoff  = dp_connector_pre_kickoff,
 		.cmd_transfer = NULL,
 	};
 	struct msm_display_info info;
@@ -2775,7 +2775,7 @@ static int sde_kms_hw_init(struct msm_kms *kms)
 		sde_kms->mmio = NULL;
 		goto error;
 	}
-	DRM_INFO("mapped mdp address space @%pK\n", sde_kms->mmio);
+	DRM_INFO("mapped mdp address space @%p\n", sde_kms->mmio);
 	sde_kms->mmio_len = msm_iomap_size(dev->platformdev, "mdp_phys");
 
 	rc = sde_dbg_reg_register_base(SDE_DBG_NAME, sde_kms->mmio,

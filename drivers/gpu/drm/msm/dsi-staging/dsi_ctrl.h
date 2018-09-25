@@ -247,7 +247,7 @@ struct dsi_ctrl {
 	u32 cmd_buffer_iova;
 	u32 cmd_len;
 	void *vaddr;
-	bool secure_mode;
+	u32 secure_mode;
 
 	/* Debug Information */
 	struct dentry *debugfs_root;

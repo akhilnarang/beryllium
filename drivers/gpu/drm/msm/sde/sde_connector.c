@@ -984,38 +984,34 @@ static int _sde_connector_set_ext_hdr_info(
 	struct sde_connector_state *c_state,
 	void *usr_ptr)
 {
-	int rc = 0;
 	struct drm_connector *connector;
 	struct drm_msm_ext_hdr_metadata *hdr_meta;
 	int i;
 
 	if (!c_conn || !c_state) {
 		SDE_ERROR_CONN(c_conn, "invalid args\n");
-		rc = -EINVAL;
-		goto end;
+		return -EINVAL;
 	}
 
 	connector = &c_conn->base;
 
 	if (!connector->hdr_supported) {
 		SDE_ERROR_CONN(c_conn, "sink doesn't support HDR\n");
-		rc = -ENOTSUPP;
-		goto end;
+		return -ENOTSUPP;
 	}
 
 	memset(&c_state->hdr_meta, 0, sizeof(c_state->hdr_meta));
 
 	if (!usr_ptr) {
 		SDE_DEBUG_CONN(c_conn, "hdr metadata cleared\n");
-		goto end;
+		return 0;
 	}
 
 	if (copy_from_user(&c_state->hdr_meta,
 		(void __user *)usr_ptr,
 			sizeof(*hdr_meta))) {
 		SDE_ERROR_CONN(c_conn, "failed to copy hdr metadata\n");
-		rc = -EFAULT;
-		goto end;
+		return -EFAULT;
 	}
 
 	hdr_meta = &c_state->hdr_meta;
@@ -1038,10 +1034,7 @@ static int _sde_connector_set_ext_hdr_info(
 				   hdr_meta->display_primaries_y[i]);
 	}
 
-	if (c_conn->ops.config_hdr)
-		rc = c_conn->ops.config_hdr(c_conn->display, c_state);
-end:
-	return rc;
+	return 0;
 }
 
 static int sde_connector_atomic_set_property(struct drm_connector *connector,

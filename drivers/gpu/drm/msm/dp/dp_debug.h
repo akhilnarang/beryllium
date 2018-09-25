@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,7 +18,6 @@
 #include "dp_panel.h"
 #include "dp_link.h"
 #include "dp_usbpd.h"
-#include "dp_aux.h"
 
 /**
  * struct dp_debug
@@ -30,7 +29,6 @@
  */
 struct dp_debug {
 	bool debug_en;
-	bool sim_mode;
 	bool psm_enabled;
 	int aspect_ratio;
 	int vdisplay;
@@ -47,7 +45,6 @@ struct dp_debug {
  * @usbpd: instance of usbpd module
  * @link: instance of link module
  * @connector: double pointer to display connector
- * @catalog: instance of catalog module
  * return: pointer to allocated debug module data
  *
  * This function sets up the debug module and provides a way
@@ -55,8 +52,7 @@ struct dp_debug {
  */
 struct dp_debug *dp_debug_get(struct device *dev, struct dp_panel *panel,
 			struct dp_usbpd *usbpd, struct dp_link *link,
-			struct dp_aux *aux, struct drm_connector **connector,
-			struct dp_catalog *catalog);
+			struct drm_connector **connector);
 /**
  * dp_debug_put()
  *

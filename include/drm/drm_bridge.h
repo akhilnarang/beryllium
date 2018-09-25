@@ -221,5 +221,4 @@ void drm_bridge_mode_set(struct drm_bridge *bridge,
 void drm_bridge_pre_enable(struct drm_bridge *bridge);
 void drm_bridge_enable(struct drm_bridge *bridge);
 int dsi_bridge_interface_enable(int timeout);
-
 #endif
