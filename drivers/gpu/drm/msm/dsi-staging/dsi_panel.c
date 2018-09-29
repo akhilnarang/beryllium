@@ -1846,7 +1846,7 @@ static int dsi_panel_create_cmd_packets(const char *data,
 		cmd[i].msg.channel = data[2];
 		cmd[i].msg.flags |= (data[3] == 1 ? MIPI_DSI_MSG_REQ_ACK : 0);
 		cmd[i].msg.ctrl = 0;
-		cmd[i].post_wait_ms = data[4];
+		cmd[i].post_wait_ms = cmd[i].msg.wait_ms = data[4];
 		cmd[i].msg.tx_len = ((data[5] << 8) | (data[6]));
 
 		size = cmd[i].msg.tx_len * sizeof(u8);
@@ -4049,7 +4049,7 @@ int dsi_panel_set_nolp(struct dsi_panel *panel)
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_NOLP);
 	if (rc)
 		pr_err("[%s] failed to send DSI_CMD_SET_NOLP cmd, rc=%d\n",
-				panel->name, rc);
+		       panel->name, rc);
 
 	panel->fod_hbm_enabled = false;
 	mutex_unlock(&panel->panel_lock);
@@ -4145,6 +4145,7 @@ static int dsi_panel_roi_prepare_dcs_cmds(struct dsi_panel_cmd_set *set,
 	set->cmds[0].msg.tx_buf = caset;
 	set->cmds[0].msg.rx_len = 0;
 	set->cmds[0].msg.rx_buf = 0;
+	set->cmds[0].msg.wait_ms = 0;
 	set->cmds[0].last_command = 0;
 	set->cmds[0].post_wait_ms = 1;
 
@@ -4156,6 +4157,7 @@ static int dsi_panel_roi_prepare_dcs_cmds(struct dsi_panel_cmd_set *set,
 	set->cmds[1].msg.tx_buf = paset;
 	set->cmds[1].msg.rx_len = 0;
 	set->cmds[1].msg.rx_buf = 0;
+	set->cmds[1].msg.wait_ms = 0;
 	set->cmds[1].last_command = 1;
 	set->cmds[1].post_wait_ms = 1;
 
@@ -4713,6 +4715,7 @@ int dsi_panel_enable(struct dsi_panel *panel)
 		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
+
 	mutex_lock(&panel->panel_lock);
 
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON);

@@ -129,14 +129,13 @@ int dsi_display_set_backlight(void *display, u32 bl_lvl)
 	panel = dsi_display->panel;
 	drm_dev = dsi_display->drm_dev;
 
-	mutex_lock(&panel->panel_lock);
+	panel->bl_config.bl_level = bl_lvl;
+
 	if (!dsi_panel_initialized(panel)) {
 		pr_info("[%s] set backlight before panel initialized, caching value: %d\n",
 		dsi_display->name, bl_lvl);
 		goto error;
 	}
-
-	panel->bl_config.bl_level = bl_lvl;
 
 	/* scale backlight */
 	bl_scale = panel->bl_config.bl_scale;
@@ -178,7 +177,6 @@ int dsi_display_set_backlight(void *display, u32 bl_lvl)
 	}
 
 error:
-	mutex_unlock(&panel->panel_lock);
 	return rc;
 }
 
@@ -317,6 +315,7 @@ static void dsi_display_aspace_cb_locked(void *cb_data, bool is_detach)
 		display_ctrl->ctrl->cmd_buffer_size = display->cmd_buffer_size;
 		display_ctrl->ctrl->cmd_buffer_iova = display->cmd_buffer_iova;
 		display_ctrl->ctrl->vaddr = display->vaddr;
+		display_ctrl->ctrl->secure_mode = is_detach;
 	}
 
 end:
@@ -570,6 +569,9 @@ static int dsi_display_read_status(struct dsi_display_ctrl *ctrl,
 	if (dsi_ctrl_validate_host_state(ctrl->ctrl))
 		return 1;
 
+	/* acquire panel_lock to make sure no commands are in progress */
+	dsi_panel_acquire_panel_lock(panel);
+
 	config = &(panel->esd_config);
 	lenp = config->status_valid_params ?: config->status_cmds_rlen;
 	count = config->status_cmd.count;
@@ -587,7 +589,7 @@ static int dsi_display_read_status(struct dsi_display_ctrl *ctrl,
 		rc = dsi_ctrl_cmd_transfer(ctrl->ctrl, &cmds[i].msg, flags);
 		if (rc <= 0) {
 			pr_err("rx cmd transfer failed rc=%d\n", rc);
-			return rc;
+			goto error;
 		}
 
 		memcpy(config->return_buf + start,
@@ -599,6 +601,9 @@ static int dsi_display_read_status(struct dsi_display_ctrl *ctrl,
 					((cmds->post_wait_ms*1000)+10));
 	}
 
+error:
+	/* release panel_lock */
+	dsi_panel_release_panel_lock(panel);
 	return rc;
 }
 
@@ -725,11 +730,11 @@ int dsi_display_check_status(void *display)
 
 	status_mode = panel->esd_config.status_mode;
 
-	dsi_panel_acquire_panel_lock(panel);
+	mutex_lock(&dsi_display->display_lock);
 
 	if (!panel->panel_initialized) {
 		pr_debug("Panel not initialized\n");
-		dsi_panel_release_panel_lock(panel);
+		mutex_unlock(&dsi_display->display_lock);
 		return rc;
 	}
 
@@ -749,7 +754,7 @@ int dsi_display_check_status(void *display)
 
 	dsi_display_clk_ctrl(dsi_display->dsi_clk_handle,
 		DSI_ALL_CLKS, DSI_CLK_OFF);
-	dsi_panel_release_panel_lock(panel);
+	mutex_unlock(&dsi_display->display_lock);
 
 	return rc;
 }
@@ -946,7 +951,7 @@ static int dsi_display_cmd_prepare(const char *cmd_buf, u32 cmd_buf_len,
 	cmd->msg.channel = cmd_buf[2];
 	cmd->msg.flags = cmd_buf[3];
 	cmd->msg.ctrl = 0;
-	cmd->post_wait_ms = cmd_buf[4];
+	cmd->post_wait_ms = cmd->msg.wait_ms = cmd_buf[4];
 	cmd->msg.tx_len = ((cmd_buf[5] << 8) | (cmd_buf[6]));
 
 	if (cmd->msg.tx_len > payload_len) {
@@ -1102,6 +1107,7 @@ int dsi_display_set_power(struct drm_connector *connector,
 	struct drm_notify_data g_notify_data;
 	int rc = 0;
 	int event = 0;
+
 	if (!display || !display->panel) {
 		pr_err("invalid display/panel\n");
 		return -EINVAL;

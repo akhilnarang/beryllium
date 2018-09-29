@@ -30,6 +30,7 @@ static struct device_type drm_sysfs_device_minor = {
 };
 
 struct class *drm_class;
+
 static char *drm_devnode(struct device *dev, umode_t *mode)
 {
 	return kasprintf(GFP_KERNEL, "dri/%s", dev_name(dev));
@@ -47,7 +48,6 @@ static CLASS_ATTR_STRING(version, S_IRUGO, "drm 1.1.0 20060810");
  *
  * Return: 0 on success, negative error code on failure.
  */
-
 int drm_sysfs_init(void)
 {
 	int err;
@@ -353,6 +353,7 @@ static const struct attribute_group *connector_dev_groups[] = {
 	&connector_dev_group,
 	NULL
 };
+
 /**
  * drm_sysfs_connector_add - add a connector to sysfs
  * @connector: connector to add
@@ -365,6 +366,7 @@ static const struct attribute_group *connector_dev_groups[] = {
 int drm_sysfs_connector_add(struct drm_connector *connector)
 {
 	struct drm_device *dev = connector->dev;
+
 	if (connector->kdev)
 		return 0;
 
@@ -375,6 +377,7 @@ int drm_sysfs_connector_add(struct drm_connector *connector)
 					  connector->name);
 	DRM_DEBUG("adding \"%s\" to sysfs\n",
 		  connector->name);
+
 	if (IS_ERR(connector->kdev)) {
 		DRM_ERROR("failed to register connector device: %ld\n", PTR_ERR(connector->kdev));
 		return PTR_ERR(connector->kdev);
